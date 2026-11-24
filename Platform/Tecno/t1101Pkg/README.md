@@ -44,6 +44,12 @@ The local toolchain setup used for these builds patches `GenFw` for modern
 clang output; a clean checkout may need that same local-only fix to rebuild
 DEBUG.
 
+## Status
+
+Verified on hardware: the DEBUG image reaches `UEFI Interactive Shell v2.2`
+with working framebuffer console output at `0xfe41a000`, 1216-pixel stride.
+The shell exposes the UEFI FVs as `FS0`/`FS1` and a 96 MB ramdisk as `BLK0`.
+
 ## Flash
 
 Back up `preloader`, `boot`, `nvram`/`nvdata`, `vbmeta` first.
