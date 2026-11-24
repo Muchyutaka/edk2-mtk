@@ -455,7 +455,9 @@ SimpleFbDxeInitialize(
   // zhuowei: clear the screen to black
   // UEFI standard requires this, since text is white - see
   // OvmfPkg/QemuVideoDxe/Gop.c
-  for (UINT32 i = 0; i <= MipiFrameBufferLayers; i++) {
+  // Clear exactly the configured number of layers. Using <= here clears one
+  // layer too many and can overwrite ordinary RAM immediately after the FB.
+  for (UINT32 i = 0; i < MipiFrameBufferLayers; i++) {
     ZeroMem((void *)(FrameBufferAddress + (FrameBufferSize * i)), FrameBufferSize);
   }
 
