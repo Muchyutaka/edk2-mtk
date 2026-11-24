@@ -73,6 +73,19 @@ _Start:
 	subs	x11, x11, #1
 	b.ne	.Lfb_row
 
+	/* Push the painted pixels out to DRAM so the scanout engine sees them. */
+	movz	x7, #0xa000
+	movk	x7, #0xfe41, lsl #16  /* 0xfe41a000 */
+	movz	x8, #0xb000
+	movk	x8, #0x6, lsl #16     /* 0x0006b000 cache lines (64 B each) */
+.Lfb_clean:
+	dc	civac, x7
+	add	x7, x7, #64
+	subs	x8, x8, #1
+	b.ne	.Lfb_clean
+	dsb	sy
+	isb	sy
+
 	/* Give the pattern a moment before EDK2 takes over the console. */
 	movz	x14, #0
 	movk	x14, #0x400, lsl #16  /* 0x04000000 */

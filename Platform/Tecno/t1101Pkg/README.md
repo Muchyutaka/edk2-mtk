@@ -34,9 +34,10 @@ Requirements:
 Output: `Build/boot-t1101.img` (mkbootimg, header version 4).
 
 DEBUG builds include an early BootShim framebuffer self-test using the live
-LK `fb_base`: the screen fills red with a green 1200x240 block at the top-left
-for a moment before EDK2 starts. RELEASE builds skip this test. This is
-compile-gated by `T1101_FB_TEST`, so other board packages are unaffected.
+LK `fb_base`: the screen fills red with a green 1200x240 block at the top-left,
+the range is cleaned to DRAM with `dc civac`, and it is held briefly before
+EDK2 starts. RELEASE builds skip this test. This is compile-gated by
+`T1101_FB_TEST`, so other board packages are unaffected.
 
 The local toolchain setup used for these builds patches `GenFw` for modern
 clang output; a clean checkout may need that same local-only fix to rebuild
