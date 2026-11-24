@@ -9,8 +9,10 @@ all: BootShim.elf BootShim.bin
 BootShim.bin: BootShim.elf
 	$(OBJCOPY) -O binary $< $@
 
+CFLAGS = -DUEFI_BASE=$(UEFI_BASE) -DUEFI_SIZE=$(UEFI_SIZE) $(EXTRA_CFLAGS)
+
 BootShim.elf: BootShim.S
-	$(CC) -c $< -o $@ -DUEFI_BASE=$(UEFI_BASE) -DUEFI_SIZE=$(UEFI_SIZE)
+	$(CC) -c $< -o $@ $(CFLAGS)
 
 BootShim.S:
 

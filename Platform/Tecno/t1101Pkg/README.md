@@ -7,10 +7,10 @@ reuses `Silicon/MediaTek/MT6789Pkg` unchanged.
 
 | Item | Value | Source |
 | --- | --- | --- |
-| Panel | 1200 x 1920, IPS 90 Hz | stock specs / DTB |
-| LCM | `mt63672e_fhd_dsi_vdo_60hz_idi_dphy_drv` | DTB `/chosen atag,videolfb-lcmname` |
-| Framebuffer base | `0x7e605000` | DTB `/chosen atag,videolfb-fb_base_l` |
-| LK VRAM size | `0x01be0000` | DTB `/chosen atag,videolfb-vramSize` |
+| Panel | 1200 x 1920, IPS 60 Hz | running stock firmware |
+| LCM | `nt36672e_fhd_dsi_vdo_60hz_jdi_dphy_drv` | running `/proc/device-tree/chosen/atag,videolfb-lcmname` |
+| Framebuffer base | `0xfe41a000` | running `/proc/device-tree/chosen/atag,videolfb-fb_base_l` (LK rewrites this; on-disk DTB value `0x7e605000` is stale) |
+| LK VRAM size | `0x01ac0000` | running `/proc/device-tree/chosen/atag,videolfb-vramSize` |
 | UEFI FB size | `0x1a5e000` | 1200 x 1920 x 4 B x 3 layers |
 | DRAM | 8 GB @ `0x40000000` | device specs, emerald layout |
 | RAM disk | 96 MB @ `0x66f00000` | inherited from emerald |
@@ -33,8 +33,14 @@ Requirements:
 
 Output: `Build/boot-t1101.img` (mkbootimg, header version 4).
 
-Note: use `RELEASE`. `DEBUG` with modern clang generates ELF sections that
-the old `GenFw` in this repo cannot convert (>1 MB section alignment limit).
+DEBUG builds include an early BootShim framebuffer self-test using the live
+LK `fb_base`: the screen fills red with a green 1200x240 block at the top-left
+for a moment before EDK2 starts. RELEASE builds skip this test. This is
+compile-gated by `T1101_FB_TEST`, so other board packages are unaffected.
+
+The local toolchain setup used for these builds patches `GenFw` for modern
+clang output; a clean checkout may need that same local-only fix to rebuild
+DEBUG.
 
 ## Flash
 

@@ -182,8 +182,12 @@ class PlatformBuilder (UefiBuilder, BuildSettingsManager):
         fd_size = self.env.GetValue("BLD_*_FD_SIZE")
 
         try:
+            extra_cflags = []
+            if self.env.GetValue("TARGET") == "DEBUG":
+                extra_cflags.append("EXTRA_CFLAGS=-DT1101_FB_TEST=1")
+
             subprocess.run(
-                ["make", "-C", "BootShim", f"UEFI_BASE={fd_base}", f"UEFI_SIZE={fd_size}"],
+                ["make", "-C", "BootShim", f"UEFI_BASE={fd_base}", f"UEFI_SIZE={fd_size}"] + extra_cflags,
                 check=True
             )
         except subprocess.CalledProcessError:

@@ -44,6 +44,42 @@ _StackSize:
 	.quad UEFI_SIZE
 
 _Start:
+#ifdef T1101_FB_TEST
+	/* Early framebuffer proof for T1101 using the live LK fb_base. */
+	movz	x7, #0xa000
+	movk	x7, #0xfe41, lsl #16  /* 0xfe41a000 */
+	movz	x8, #0xc000
+	movk	x8, #0x1a, lsl #16    /* 0x001ac000 = 0x01ac0000 / 16 */
+	mov	w9, #0x00FF0000       /* red */
+	mov	w10, w9
+.Lfb_red:
+	stp	w9, w10, [x7], #16
+	subs	x8, x8, #1
+	b.ne	.Lfb_red
+
+	/* Bright green 1200x240 block in the top-left corner. */
+	movz	x7, #0xa000
+	movk	x7, #0xfe41, lsl #16  /* 0xfe41a000 */
+	mov	x11, #240
+	mov	x12, #600             /* 1200 pixels / 2 */
+	mov	w9, #0x0000FF00       /* green */
+	mov	w10, w9
+.Lfb_row:
+	mov	x13, x12
+.Lfb_col:
+	stp	w9, w10, [x7], #16
+	subs	x13, x13, #1
+	b.ne	.Lfb_col
+	subs	x11, x11, #1
+	b.ne	.Lfb_row
+
+	/* Give the pattern a moment before EDK2 takes over the console. */
+	movz	x14, #0
+	movk	x14, #0x400, lsl #16  /* 0x04000000 */
+.Lfb_delay:
+	subs	x14, x14, #1
+	b.ne	.Lfb_delay
+#endif
 	mov	x4, x1
 	ldr	x5, _StackBase
 	cmp	x4, x5

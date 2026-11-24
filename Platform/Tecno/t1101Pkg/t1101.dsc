@@ -20,14 +20,17 @@
   gMediaTekTokenSpaceGuid.PcdUefiMemPoolSize|0x075b0000
 
   # Simple Framebuffer
-  # Tecno T1101 (MT8781): values from stock DTB /chosen atag,videolfb-*
-  #   fb_base_l   = 0x7e605000
-  #   vramSize    = 0x01be0000
-  #   lcmname     = mt63672e_fhd_dsi_vdo_60hz_idi_dphy_drv
+  # Tecno T1101 (MT8781): live values read from the running stock firmware
+  # at /proc/device-tree/chosen/atag,videolfb-*. LK rewrites these at boot,
+  # so the value in the on-disk DTB (0x7e605000) is stale.
+  #   fb_base_l   = 0xfe41a000
+  #   fb_base_h   = 0x00000000
+  #   vramSize    = 0x01ac0000
+  #   lcmname     = nt36672e_fhd_dsi_vdo_60hz_jdi_dphy_drv
   # 1200x1920 x 4 bytes x 3 layers = 0x1A5E000
   gMediaTekTokenSpaceGuid.PcdMipiFrameBufferWidth|1200
   gMediaTekTokenSpaceGuid.PcdMipiFrameBufferHeight|1920
-  gMediaTekTokenSpaceGuid.PcdMipiFrameBufferAddress|0x7e605000
+  gMediaTekTokenSpaceGuid.PcdMipiFrameBufferAddress|0xfe41a000
 
 [LibraryClasses]
   PlatformMemoryMapLib|t1101Pkg/Library/PlatformMemoryMapLib/PlatformMemoryMapLib.inf
