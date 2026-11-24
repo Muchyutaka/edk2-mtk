@@ -24,7 +24,7 @@
 #
 ################################################################################
 
-[FD.EMERALD_UEFI]
+[FD.T1101_UEFI]
 BaseAddress   = $(FD_BASE)|gArmTokenSpaceGuid.PcdFdBaseAddress  # The base address of the Firmware
 Size          = $(FD_SIZE)|gArmTokenSpaceGuid.PcdFdSize
 ErasePolarity = 1

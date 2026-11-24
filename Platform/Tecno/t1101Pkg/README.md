@@ -18,12 +18,23 @@ reuses `Silicon/MediaTek/MT6789Pkg` unchanged.
 
 ## Build
 
+Requirements:
+- Python 3 with `edk2toolext` + `edk2toollib` (from tianocore GitHub repos)
+- `aarch64-linux-gnu-gcc` + `aarch64-linux-gnu-objcopy` (for BootShim)
+- `iasl` (ACPI compiler)
+- `clang` + AArch64-capable `ld` (GNU `aarch64-linux-gnu-ld` recommended;
+  `ld.lld` is too strict about EDK2's absolute relocations)
+- `mkbootimg`
+
 ```sh
-./build.sh -s -t DEBUG Tecno/t1101Pkg    # one-time setup
-./build.sh -t DEBUG Tecno/t1101Pkg
+./build.sh -s -t RELEASE Tecno/t1101Pkg    # one-time setup
+./build.sh -t RELEASE Tecno/t1101Pkg
 ```
 
 Output: `Build/boot-t1101.img` (mkbootimg, header version 4).
+
+Note: use `RELEASE`. `DEBUG` with modern clang generates ELF sections that
+the old `GenFw` in this repo cannot convert (>1 MB section alignment limit).
 
 ## Flash
 
