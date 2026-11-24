@@ -11,7 +11,8 @@ reuses `Silicon/MediaTek/MT6789Pkg` unchanged.
 | LCM | `nt36672e_fhd_dsi_vdo_60hz_jdi_dphy_drv` | running `/proc/device-tree/chosen/atag,videolfb-lcmname` |
 | Framebuffer base | `0xfe41a000` | running `/proc/device-tree/chosen/atag,videolfb-fb_base_l` (LK rewrites this; on-disk DTB value `0x7e605000` is stale) |
 | LK VRAM size | `0x01ac0000` | running `/proc/device-tree/chosen/atag,videolfb-vramSize` |
-| UEFI FB size | `0x1a5e000` | 1200 x 1920 x 4 B x 3 layers |
+| UEFI FB stride | `1216` pixels | inferred from live `vramSize`: 1216 x 1920 x 4 B x 3 layers = `0x1ab4000` (+32 KB padding); panel itself is 1200 wide |
+| UEFI FB size | `0x1ac0000` | live LK VRAM size |
 | DRAM | 8 GB @ `0x40000000` | device specs, emerald layout |
 | RAM disk | 96 MB @ `0x66f00000` | inherited from emerald |
 | UEFI FD | 10 MB @ `0x50000000` | inherited from emerald |

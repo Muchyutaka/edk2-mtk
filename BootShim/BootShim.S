@@ -61,7 +61,7 @@ _Start:
 	movz	x7, #0xa000
 	movk	x7, #0xfe41, lsl #16  /* 0xfe41a000 */
 	mov	x11, #240
-	mov	x12, #600             /* 1200 pixels / 2 */
+	mov	x12, #608             /* 1216-pixel stride / 2 */
 	mov	w9, #0x0000FF00       /* green */
 	mov	w10, w9
 .Lfb_row:

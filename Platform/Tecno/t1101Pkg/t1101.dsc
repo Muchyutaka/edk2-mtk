@@ -27,8 +27,11 @@
   #   fb_base_h   = 0x00000000
   #   vramSize    = 0x01ac0000
   #   lcmname     = nt36672e_fhd_dsi_vdo_60hz_jdi_dphy_drv
-  # 1200x1920 x 4 bytes x 3 layers = 0x1A5E000
-  gMediaTekTokenSpaceGuid.PcdMipiFrameBufferWidth|1200
+  # Panel is 1200 wide, but LK pads each row to 1216 pixels (128-byte
+  # aligned). 3 x 1216 x 1920 x 4 = 0x1AB4000, which fits the live
+  # vramSize 0x1AC0000 with 32 KB left over. Using 1200 here makes every
+  # row shift by 16 pixels and text renders as diagonal static.
+  gMediaTekTokenSpaceGuid.PcdMipiFrameBufferWidth|1216
   gMediaTekTokenSpaceGuid.PcdMipiFrameBufferHeight|1920
   gMediaTekTokenSpaceGuid.PcdMipiFrameBufferAddress|0xfe41a000
 
