@@ -903,6 +903,12 @@ Notes:
 
 The shell still started and all EDK2 USB drivers loaded, so this is not a firmware-wide regression.
 
+One inconsistency: the report mentions `Loading driver ... UsbMouseDxe.efi`. That module is not in
+FVMAIN for `boot-t1101-vbus-i2c-fix.img` or `boot-t1101-vbus-dma-fix.img`; its GUID
+`2D2E62AA-9ECF-43B7-8219-94E7FC713DFE` is absent from `FVMAIN.Fv.txt`, while `UsbKbDxe` is
+present. If that line is real rather than OCR noise, the device booted an older image. Re-flash the
+exact file named in section 16 before judging this result.
+
 ### Interpretation
 
 The clock dump shows `impc=0x00000002`, so the I2C5 main gate was enabled. The `ifrao0` and
