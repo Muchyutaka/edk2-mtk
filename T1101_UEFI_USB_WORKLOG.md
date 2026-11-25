@@ -272,8 +272,9 @@ Observed shell mappings from this image:
 
 The `boot-t1101.img` asset on the GitHub release is stale. Do not use it. The earlier
 `boot-t1101-musb-test.img` was hardware-tested and failed because MT6375 VBUS could not be
-enabled (I2C `ACKERR`). The current experimental asset is `boot-t1101-vbus-i2c-fix.img`; see
-section 15.
+enabled (I2C `ACKERR`). The PIO-based `boot-t1101-vbus-i2c-fix.img` was then hardware-tested and
+failed with an I2C timeout. The current experimental asset is `boot-t1101-vbus-dma-fix.img`; see
+sections 15 and 16.
 
 ## 5. Flash and boot commands
 
@@ -669,14 +670,16 @@ Linker warnings about RWX LOAD segments are expected for EDK2 modules with this 
 Produced test image:
 
 ```text
-/home/yutaka/edk2-mtk/Build/boot-t1101-vbus-i2c-fix.img
-MD5:    f84d8d33e91cd5d78854748a301651e5
-SHA256: ed5b96ccce085d1ac55996b076121e27d2f6173e92d14e1e51a4e331b3cbff22
-URL:    https://github.com/Muchyutaka/edk2-mtk/releases/download/t1101-uefi-test/boot-t1101-vbus-i2c-fix.img
+/home/yutaka/edk2-mtk/Build/boot-t1101-vbus-dma-fix.img
+MD5:    7049a620f6f10449e0958aa8998c088c
+SHA256: 68b1cc5d88ef9d824d72ee23739911c27d182b86af985fca700bf564a75bb179
+URL:    https://github.com/Muchyutaka/edk2-mtk/releases/download/t1101-uefi-test/boot-t1101-vbus-dma-fix.img
 ```
 
-The earlier hardware-tested image was `boot-t1101-musb-test.img` with MD5
-`9bb98f106eaee16e8d6ae241f7399256`.
+Earlier hardware-tested images:
+
+- `boot-t1101-musb-test.img` — MD5 `9bb98f106eaee16e8d6ae241f7399256`, I2C `ACKERR`.
+- `boot-t1101-vbus-i2c-fix.img` — MD5 `f84d8d33e91cd5d78854748a301651e5`, I2C timeout.
 
 ### Hardware verification
 
@@ -748,7 +751,7 @@ Even after USB works, native Windows 11 ARM64 will likely need:
 1. Keep MD5 `1baca0653cf68a2539772e58562f7550` as the known-good fallback.
 2. Flash the new test image once with hub, keyboard, and flash drive attached:
    ```bash
-   fastboot flash boot /home/yutaka/edk2-mtk/Build/boot-t1101-vbus-i2c-fix.img
+   fastboot flash boot /home/yutaka/edk2-mtk/Build/boot-t1101-vbus-dma-fix.img
    fastboot reboot
    ```
 3. Collect the DEBUG lines listed in section 10 and the shell output from:
@@ -812,7 +815,7 @@ Even after USB works, native Windows 11 ARM64 will likely need:
 
 ## 14. One-line status
 
-The native UEFI shell is working on hardware with MD5 `1baca0653cf68a2539772e58562f7550`; the first MUSB image failed to enable MT6375 VBUS, and the corrected PIO-based test image is ready at MD5 `f84d8d33e91cd5d78854748a301651e5`, but USB support remains hardware-unverified.
+The native UEFI shell is working on hardware with MD5 `1baca0653cf68a2539772e58562f7550`; two VBUS attempts failed on hardware, and the corrected DMA-based one-byte-register test image is ready at MD5 `7049a620f6f10449e0958aa8998c088c`, but USB support remains hardware-unverified.
 
 ## 15. MT6375 I2C/VBUS correction — 2026-11-25
 
@@ -863,7 +866,7 @@ format and explains the NACK.
   `TRANSFER_LEN_AUX`, `TRANSAC_LEN`, `FIFO_STAT`, `TIMING`, `EXT_CONF`, and `CLOCK_DIV`.
 - Removed `UsbMouseDxe.inf` from `t1101.fdf` to keep FVMAIN within the available space.
 
-### Current image
+### Image from this pass
 
 ```text
 /home/yutaka/edk2-mtk/Build/boot-t1101-vbus-i2c-fix.img
@@ -872,9 +875,73 @@ SHA256: ed5b96ccce085d1ac55996b076121e27d2f6173e92d14e1e51a4e331b3cbff22
 FVMAIN: 40 bytes free
 ```
 
+This image was hardware-tested and is described in section 16.
+
+## 16. Hardware result for the PIO image and DMA fallback — 2026-11-25
+
+### User report decoded
+
+The user supplied a description generated from stills/OCR rather than copied text. After accounting
+for OCR errors, the reported lines map to this firmware:
+
+```text
+MusbHostDxe: I2C clocks impc=0x00000002 ifrao0=0x00000000 ifrao5=0x00000000
+MusbHostDxe: I2C timeout stat=0000
+MusbHostDxe: MT6375 VBUS enable failed (Time out)
+MusbHostDxe: HWVERS=.. EPINFO=.. RAMINFO=.. CONFIGDATA=3f
+MusbHostDxe: FIFO config ends at 0x1ec0
+MusbHostDxe: connect=no ...
+MusbHostDxe: no device detected on USB2 OTG port (Device Error)
+```
+
+Notes:
+
+- `AuthBootSet`/`MusbHostInit` are OCR distortions of `MusbHostDxe`.
+- `input`/`ifraud`/`ifrad` are OCR distortions of `impc`/`ifrao0`/`ifrao5`.
+- `I2C license status=0000` is almost certainly `I2C timeout stat=0000`.
+- `HSIC VBUS enable failed` is almost certainly `MT6375 VBUS enable failed`.
+
+The shell still started and all EDK2 USB drivers loaded, so this is not a firmware-wide regression.
+
+### Interpretation
+
+The clock dump shows `impc=0x00000002`, so the I2C5 main gate was enabled. The `ifrao0` and
+`ifrao5` values appear to be zero, though OCR may have dropped hex digits. More importantly, the
+failure changed from `ACKERR` to a pure timeout: the controller did not report completion or an
+error at all.
+
+That means the one-byte register hypothesis is still unproven, but the PIO transfer setup itself
+is not working on this board. The previous DMA-based implementation did produce a complete I2C
+interrupt with `ACKERR`, so it is the better baseline.
+
+### Change made
+
+Restored the previous DMA-based I2C implementation, while keeping:
+
+- the one-byte MT6375 register fix,
+- the explicit I2C5 clock enables,
+- the detailed I2C error dump,
+- `UsbMouseDxe.inf` removed from the FDF.
+
+The DMA control bits, transfer lengths, and start bits are back to the known-working values from
+commit `0645c22`; only the wire register byte count changed from two bytes to one.
+
+### Current image
+
+```text
+/home/yutaka/edk2-mtk/Build/boot-t1101-vbus-dma-fix.img
+MD5:   7049a620f6f10449e0958aa8998c088c
+SHA256: 68b1cc5d88ef9d824d72ee23739911c27d182b86af985fca700bf564a75bb179
+FVMAIN: 40 bytes free
+```
+
 Flash command:
 
 ```bash
-fastboot flash boot /home/yutaka/edk2-mtk/Build/boot-t1101-vbus-i2c-fix.img
+fastboot flash boot /home/yutaka/edk2-mtk/Build/boot-t1101-vbus-dma-fix.img
 fastboot reboot
 ```
+
+If this still fails, the next diagnostic should be a still photo (not OCR) of the `I2C clocks`,
+`I2C error`, and `VBUS enable` lines, because the exact `ifrao0`/`ifrao5` and `stat` values decide
+whether the remaining issue is clock gating or MT6375 register programming.
