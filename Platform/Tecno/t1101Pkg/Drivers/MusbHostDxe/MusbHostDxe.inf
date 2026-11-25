@@ -1,0 +1,32 @@
+[Defines]
+  INF_VERSION                    = 0x0001001A
+  BASE_NAME                      = MusbHostDxe
+  FILE_GUID                      = 51D8E6B0-1A2F-4D3C-9B77-21556F88304E
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = MusbHostDxeEntry
+
+[Sources]
+  MusbHostDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiLib
+  BaseLib
+  BaseMemoryLib
+  IoLib
+  MemoryAllocationLib
+  UefiBootServicesTableLib
+  DevicePathLib
+  DebugLib
+
+[Protocols]
+  gEfiDevicePathProtocolGuid
+  gEfiUsb2HcProtocolGuid
+
+[Depex]
+  TRUE

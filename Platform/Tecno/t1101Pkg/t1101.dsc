@@ -38,4 +38,7 @@
 [LibraryClasses]
   PlatformMemoryMapLib|t1101Pkg/Library/PlatformMemoryMapLib/PlatformMemoryMapLib.inf
 
+[Components.AARCH64]
+  t1101Pkg/Drivers/MusbHostDxe/MusbHostDxe.inf
+
 !include Silicon/MediaTek/MT6789Pkg/MT6789.dsc
