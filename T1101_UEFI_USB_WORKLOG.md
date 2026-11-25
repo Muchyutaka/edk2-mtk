@@ -270,8 +270,10 @@ Observed shell mappings from this image:
 
 ### Stale asset warning
 
-The `boot-t1101.img` asset on the GitHub release is stale. Do not use it. The current experimental
-MUSB/VBUS test asset is `boot-t1101-musb-test.img`; it has not been hardware-tested yet.
+The `boot-t1101.img` asset on the GitHub release is stale. Do not use it. The earlier
+`boot-t1101-musb-test.img` was hardware-tested and failed because MT6375 VBUS could not be
+enabled (I2C `ACKERR`). The current experimental asset is `boot-t1101-vbus-i2c-fix.img`; see
+section 15.
 
 ## 5. Flash and boot commands
 
@@ -661,17 +663,20 @@ Intended endpoint map:
 ### Build verification — completed 2026-11-25
 
 The current source was rebuilt with the command in section 6. `MusbHostDxe.c` compiled cleanly,
-the image linked, and FVMAIN fit with 48 bytes free. Linker warnings about RWX LOAD segments are
-expected for EDK2 modules with this GNU linker setup.
+the image linked, and FVMAIN fit with 40 bytes free after `UsbMouseDxe` was removed from the FDF.
+Linker warnings about RWX LOAD segments are expected for EDK2 modules with this GNU linker setup.
 
 Produced test image:
 
 ```text
-/home/yutaka/edk2-mtk/Build/boot-t1101-musb-test.img
-MD5:    9bb98f106eaee16e8d6ae241f7399256
-SHA256: 2acd21cd706d6411e74fa02af47195e19bb80e623096aea17e292e4a7e690b34
-URL:    https://github.com/Muchyutaka/edk2-mtk/releases/download/t1101-uefi-test/boot-t1101-musb-test.img
+/home/yutaka/edk2-mtk/Build/boot-t1101-vbus-i2c-fix.img
+MD5:    f84d8d33e91cd5d78854748a301651e5
+SHA256: ed5b96ccce085d1ac55996b076121e27d2f6173e92d14e1e51a4e331b3cbff22
+URL:    https://github.com/Muchyutaka/edk2-mtk/releases/download/t1101-uefi-test/boot-t1101-vbus-i2c-fix.img
 ```
+
+The earlier hardware-tested image was `boot-t1101-musb-test.img` with MD5
+`9bb98f106eaee16e8d6ae241f7399256`.
 
 ### Hardware verification
 
@@ -711,8 +716,11 @@ USB is working when one of these appears:
 
 - No hardware-tested `EFI_USB2_HC_PROTOCOL`/`UsbIo` yet.
 - Hub works under Android but not yet under UEFI.
-- New MUSB driver not yet tested on hardware.
-- VBUS via MT6375 not yet tested.
+- The first MUSB image reached the shell and reported `connect=no`; no device was powered.
+- VBUS via MT6375 failed on hardware with I2C `stat=0003` (`COMP | ACKERR`).
+- The likely cause was sending both bytes of the 16-bit vendor register number on the I2C bus;
+  only the low byte is the wire register for the PMU bank.
+- The current PIO-based image has been built but not yet hardware-tested.
 
 ### Windows runtime
 
@@ -740,7 +748,7 @@ Even after USB works, native Windows 11 ARM64 will likely need:
 1. Keep MD5 `1baca0653cf68a2539772e58562f7550` as the known-good fallback.
 2. Flash the new test image once with hub, keyboard, and flash drive attached:
    ```bash
-   fastboot flash boot /home/yutaka/edk2-mtk/Build/boot-t1101-musb-test.img
+   fastboot flash boot /home/yutaka/edk2-mtk/Build/boot-t1101-vbus-i2c-fix.img
    fastboot reboot
    ```
 3. Collect the DEBUG lines listed in section 10 and the shell output from:
@@ -751,9 +759,10 @@ Even after USB works, native Windows 11 ARM64 will likely need:
    ```
    A still photo is better than Google Lens OCR when possible.
 4. If VBUS DEBUG fails, verify I2C first:
-   - Confirm `MTK_I2C_SLAVE_ADDR1 = 0x94`.
-   - Confirm DMA base `0x10217400`.
-   - Confirm preserved LK timing values.
+   - Confirm `MTK_I2C_SLAVE_ADDR1 = 0x94` (`0x34 << 1`).
+   - Confirm I2C5 clocks: `impc=...`, `ifrao0=...`, `ifrao5=...`.
+   - Confirm only the low byte of each MT6375 register number is sent.
+   - Confirm the error-register dump from `MtkI2cWaitComplete()`.
    - Confirm MT6375 slave `0x34`.
 5. If VBUS succeeds but no connect is seen, verify PHY recover and `DEVCTL_SESSION`.
 6. If connect is seen but enumeration fails, inspect EP0 control transfer DEBUG and CSR0 handling.
@@ -803,4 +812,69 @@ Even after USB works, native Windows 11 ARM64 will likely need:
 
 ## 14. One-line status
 
-The native UEFI shell is working on hardware with MD5 `1baca0653cf68a2539772e58562f7550`; a rebuilt MUSB/VBUS test image is ready at MD5 `9bb98f106eaee16e8d6ae241f7399256`, but USB support remains hardware-unverified.
+The native UEFI shell is working on hardware with MD5 `1baca0653cf68a2539772e58562f7550`; the first MUSB image failed to enable MT6375 VBUS, and the corrected PIO-based test image is ready at MD5 `f84d8d33e91cd5d78854748a301651e5`, but USB support remains hardware-unverified.
+
+## 15. MT6375 I2C/VBUS correction — 2026-11-25
+
+### Hardware result from the previous image
+
+`boot-t1101-musb-test.img` reached the shell, so the base firmware is still healthy. The new driver
+reported:
+
+```text
+MusbHostDxe: I2C error stat=0003
+MusbHostDxe: MT6375 VBUS enable failed (Device Error)
+MusbHostDxe: connect=no devctl=99 power=E0 speed=2 vbus=3
+```
+
+`stat=0003` means `I2C_TRANSAC_COMP | I2C_ACKERR`, so the MT6375 NACKed an I2C access and VBUS
+never appeared.
+
+### Root cause found in the vendor driver
+
+The Linux MT6375 MFD driver uses 16-bit register numbers, but the high byte is a bank selector,
+not part of the I2C register address:
+
+- Bank 0: TCPC, slave `0x4E`
+- Bank 1: PMU, slave `0x34`
+- Bank 2: BM, slave `0x1A`
+- Bank 3: HK1, slave `0x4A`
+- Bank 4: HK2, slave `0x64`
+- Bank 5: TM, slave `0x3F`
+
+For the PMU bank, `i2c_smbus_write_i2c_block_data()` / `i2c_smbus_read_i2c_block_data()` use only
+the low byte. The old UEFI code sent both bytes (`0x01`, then `0x20` etc.), which is the wrong wire
+format and explains the NACK.
+
+### Changes in this pass
+
+- Send only `(UINT8) Register` on the I2C bus for all MT6375 accesses.
+- Converted MT6375 register accesses from AP DMA to FIFO PIO, matching the vendor driver for
+  transfers of 16 bytes or less.
+- Aligned transfer setup with the vendor MT6983 driver:
+  - write: `CONTROL = ACKERR | CLK_EXT`, `SLAVE_ADDR1 = 0x34 << 1`, `TRANSFER_LEN = Length + 1`,
+    `TRANSAC_LEN = 1`, `START = BIT0`
+  - read: `CONTROL = ACKERR | CLK_EXT | DIR_CHG | RS`, `TRANSFER_LEN = 1`,
+    `TRANSFER_LEN_AUX = Length`, `TRANSAC_LEN = 2`, `START = BIT0`
+- Enabled the I2C5 clock chain explicitly:
+  - `IMP_IIC_WRAP_C` at `0x1101B000`, set offset `0xE08`, bit `1`
+  - `infracfg_ao` at `0x10001000`, I2C pseudo bit `11` at `0x80`, AP DMA bit `31` at `0xD0`
+- Added a detailed register dump on I2C error: `SLAVE_ADDR1`, `CONTROL`, `TRANSFER_LEN`,
+  `TRANSFER_LEN_AUX`, `TRANSAC_LEN`, `FIFO_STAT`, `TIMING`, `EXT_CONF`, and `CLOCK_DIV`.
+- Removed `UsbMouseDxe.inf` from `t1101.fdf` to keep FVMAIN within the available space.
+
+### Current image
+
+```text
+/home/yutaka/edk2-mtk/Build/boot-t1101-vbus-i2c-fix.img
+MD5:    f84d8d33e91cd5d78854748a301651e5
+SHA256: ed5b96ccce085d1ac55996b076121e27d2f6173e92d14e1e51a4e331b3cbff22
+FVMAIN: 40 bytes free
+```
+
+Flash command:
+
+```bash
+fastboot flash boot /home/yutaka/edk2-mtk/Build/boot-t1101-vbus-i2c-fix.img
+fastboot reboot
+```

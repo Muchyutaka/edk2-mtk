@@ -14,7 +14,6 @@
 #include <Uefi.h>
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
-#include <Library/CacheMaintenanceLib.h>
 #include <Library/DebugLib.h>
 #include <Library/IoLib.h>
 #include <Library/MemoryAllocationLib.h>
@@ -83,6 +82,23 @@
 #define MTK_I2C_DMA_BASE         0x10217400ULL
 #define MTK_I2C_PMU_SLAVE        0x34
 
+//
+// MT6789 clock gates used by I2C5.  The main gate lives in IMP_IIC_WRAP_C,
+// while the I2C pseudo and AP DMA gates live in infracfg_ao.
+//
+#define MTK_IMP_IIC_WRAP_C_BASE  0x1101B000ULL
+#define MTK_IMPC_CG_SET          0xE08
+#define MTK_IMPC_CG_STA          0xE00
+#define MTK_IMPC_I2C5_BIT        BIT1
+
+#define MTK_INFRACFG_AO_BASE     0x10001000ULL
+#define MTK_IFRAO_CG_SET0        0x80
+#define MTK_IFRAO_CG_STA0        0x90
+#define MTK_IFRAO_I2C_PSEUDO_BIT BIT11
+#define MTK_IFRAO_CG_SET5        0xD0
+#define MTK_IFRAO_CG_STA5        0xD8
+#define MTK_IFRAO_AP_DMA_BIT     BIT31
+
 #define MTK_I2C_DATA_PORT        0x00
 #define MTK_I2C_INTR_MASK        0x08
 #define MTK_I2C_INTR_STAT        0x0C
@@ -120,7 +136,9 @@
 #define MTK_I2C_INTR_ARBLOST     BIT3
 #define MTK_I2C_INTR_RS          BIT4
 #define MTK_I2C_INTR_HS_ACKERR   BIT2
-#define MTK_I2C_INTR_ALL         (BIT0 | BIT1 | BIT2 | BIT3 | BIT4)
+#define MTK_I2C_INTR_CONFERR     BIT9
+#define MTK_I2C_INTR_CLEAR       (BIT0 | BIT1 | BIT2 | BIT3 | BIT4 | BIT9)
+#define MTK_I2C_INTR_ENABLE      MTK_I2C_INTR_CLEAR
 
 #define MTK_I2C_CONTROL_RS       BIT1
 #define MTK_I2C_CONTROL_DMA_EN   BIT2
@@ -272,18 +290,6 @@ typedef struct {
 } MUSB_DEV;
 
 STATIC MUSB_DEV mMusb;
-
-//
-// DMA buffers for the MT6375 register accesses.  Keeping these in the
-// firmware image guarantees a physical address below 4 GB for the AP DMA.
-//
-typedef union {
-  UINT8   Bytes[16];
-  UINT64  Alignment[2];
-} MUSB_I2C_BUFFER;
-
-STATIC MUSB_I2C_BUFFER mI2cTxBuf;
-STATIC MUSB_I2C_BUFFER mI2cRxBuf;
 
 //
 // Vendor hardware device path for the controller handle.
@@ -445,9 +451,14 @@ MusbWaitMs (
 }
 
 //
-// Minimal MT6983 I2C PIO/DMA access for the MT6375 PMIC.  LK has already
-// programmed the bus timing (1 MHz, clock-div 1), so preserve those values
-// and only reset the DMA/controller handshake before each UEFI transfer.
+// Minimal MT6983 I2C PIO access for the MT6375 PMIC.  The vendor driver uses
+// the FIFO for transfers of 16 bytes or less, so all MT6375 register accesses
+// are done that way instead of through the AP DMA.  LK has already programmed
+// the bus timing (1 MHz, clock-div 1), so preserve those values.
+//
+// The MT6375 register numbers used by the vendor driver are 16-bit values:
+// the high byte selects the I2C slave/bank and the low byte is the actual
+// register.  On the PMU bank (0x01) the high byte is NOT sent on the wire.
 //
 STATIC UINT16
 MtkI2cRead16 (
@@ -479,6 +490,22 @@ MtkI2cInitHardware (
   UINT16 Values[sizeof (PreservedRegs) / sizeof (PreservedRegs[0])];
   UINTN Index;
 
+  //
+  // Enable the I2C5 clock chain explicitly.  LK normally leaves these on,
+  // but doing it here makes UEFI independent of the bootloader state.
+  //
+  MmioWrite32 (MTK_IMP_IIC_WRAP_C_BASE + MTK_IMPC_CG_SET, MTK_IMPC_I2C5_BIT);
+  MmioWrite32 (MTK_INFRACFG_AO_BASE + MTK_IFRAO_CG_SET0,
+               MTK_IFRAO_I2C_PSEUDO_BIT);
+  MmioWrite32 (MTK_INFRACFG_AO_BASE + MTK_IFRAO_CG_SET5,
+               MTK_IFRAO_AP_DMA_BIT);
+  gBS->Stall (10);
+  DEBUG ((DEBUG_INFO,
+          "MusbHostDxe: I2C clocks impc=%08x ifrao0=%08x ifrao5=%08x\n",
+          MmioRead32 (MTK_IMP_IIC_WRAP_C_BASE + MTK_IMPC_CG_STA),
+          MmioRead32 (MTK_INFRACFG_AO_BASE + MTK_IFRAO_CG_STA0),
+          MmioRead32 (MTK_INFRACFG_AO_BASE + MTK_IFRAO_CG_STA5)));
+
   for (Index = 0; Index < sizeof (PreservedRegs) / sizeof (PreservedRegs[0]); Index++) {
     Values[Index] = MtkI2cRead16 (PreservedRegs[Index]);
   }
@@ -504,10 +531,11 @@ MtkI2cInitHardware (
   }
   MtkI2cWrite16 (MTK_I2C_IO_CONFIG, MTK_I2C_IO_OPEN_DRAIN);
   MtkI2cWrite16 (MTK_I2C_DELAY_LEN, MTK_I2C_DELAY_LEN_VALUE);
+  //
+  // No DMA bits: MT6375 register accesses are short and use the I2C FIFO.
+  //
   MtkI2cWrite16 (MTK_I2C_CONTROL,
-                 (UINT16) (MTK_I2C_CONTROL_ACKERR | MTK_I2C_CONTROL_CLK_EXT |
-                           MTK_I2C_CONTROL_DMA_EN | MTK_I2C_CONTROL_DMAACK |
-                           MTK_I2C_CONTROL_ASYNC));
+                 (UINT16) (MTK_I2C_CONTROL_ACKERR | MTK_I2C_CONTROL_CLK_EXT));
   MtkI2cWrite16 (MTK_I2C_INTR_MASK, 0);
   MtkI2cWrite16 (MTK_I2C_START, 0);
   return EFI_SUCCESS;
@@ -524,8 +552,20 @@ MtkI2cWaitComplete (
   for (Try = 0; Try < 2000; Try++) {
     Status = MtkI2cRead16 (MTK_I2C_INTR_STAT);
     if ((Status & (MTK_I2C_INTR_ACKERR | MTK_I2C_INTR_HS_ACKERR |
-                   MTK_I2C_INTR_ARBLOST)) != 0) {
-      DEBUG ((DEBUG_ERROR, "MusbHostDxe: I2C error stat=%04x\n", Status));
+                   MTK_I2C_INTR_ARBLOST | MTK_I2C_INTR_CONFERR)) != 0) {
+      DEBUG ((DEBUG_ERROR,
+              "MusbHostDxe: I2C error stat=%04x addr=%04x ctl=%04x len=%04x "
+              "aux=%04x trans=%04x fifo=%04x tim=%04x ext=%04x div=%04x\n",
+              Status,
+              MtkI2cRead16 (MTK_I2C_SLAVE_ADDR1),
+              MtkI2cRead16 (MTK_I2C_CONTROL),
+              MtkI2cRead16 (MTK_I2C_TRANSFER_LEN),
+              MtkI2cRead16 (MTK_I2C_TRANSFER_LEN_AUX),
+              MtkI2cRead16 (MTK_I2C_TRANSAC_LEN),
+              MtkI2cRead16 (MTK_I2C_FIFO_STAT),
+              MtkI2cRead16 (MTK_I2C_TIMING),
+              MtkI2cRead16 (MTK_I2C_EXT_CONF),
+              MtkI2cRead16 (MTK_I2C_CLOCK_DIV)));
       return EFI_DEVICE_ERROR;
     }
     if ((Status & MTK_I2C_INTR_COMP) != 0) {
@@ -547,46 +587,36 @@ MtkI2cWriteBytes (
   )
 {
   EFI_STATUS Status;
-  UINTN Total;
+  UINTN Index;
 
-  if (Length == 0 || Length > (sizeof (mI2cTxBuf.Bytes) - 2)) {
+  if (Length == 0 || Length > 15) {
     return EFI_INVALID_PARAMETER;
   }
 
-  Total = Length + 2;
-  mI2cTxBuf.Bytes[0] = (UINT8) (Register >> 8);
-  mI2cTxBuf.Bytes[1] = (UINT8) Register;
-  CopyMem (&mI2cTxBuf.Bytes[2], Buffer, Length);
-  WriteBackDataCacheRange (mI2cTxBuf.Bytes, Total);
-
   MtkI2cWrite16 (MTK_I2C_CONTROL,
-                 (UINT16) (MTK_I2C_CONTROL_ACKERR | MTK_I2C_CONTROL_CLK_EXT |
-                           MTK_I2C_CONTROL_DMA_EN | MTK_I2C_CONTROL_DMAACK |
-                           MTK_I2C_CONTROL_ASYNC | MTK_I2C_CONTROL_RS));
+                 (UINT16) (MTK_I2C_CONTROL_ACKERR | MTK_I2C_CONTROL_CLK_EXT));
   MtkI2cWrite16 (MTK_I2C_SLAVE_ADDR1, (UINT16) (SlaveAddress << 1));
-  MtkI2cWrite16 (MTK_I2C_INTR_STAT, MTK_I2C_INTR_ALL);
+  MtkI2cWrite16 (MTK_I2C_INTR_STAT, MTK_I2C_INTR_CLEAR);
   MtkI2cWrite16 (MTK_I2C_FIFO_ADDR_CLR, MTK_I2C_FIFO_ADDR_CLR_EN);
-  MtkI2cWrite16 (MTK_I2C_INTR_MASK, MTK_I2C_INTR_ALL);
-  MtkI2cWrite16 (MTK_I2C_TRANSFER_LEN, (UINT16) Total);
+  MtkI2cWrite16 (MTK_I2C_INTR_MASK, MTK_I2C_INTR_ENABLE);
+  MtkI2cWrite16 (MTK_I2C_TRANSFER_LEN, (UINT16) (Length + 1));
   MtkI2cWrite16 (MTK_I2C_TRANSAC_LEN, 1);
 
-  MmioWrite32 (MTK_I2C_DMA_BASE + MTK_I2C_DMA_INT_FLAG, 0);
-  MmioWrite32 (MTK_I2C_DMA_BASE + MTK_I2C_DMA_CON,
-               MTK_I2C_DMA_CON_TX | MTK_I2C_DMA_SKIP_CONFIG |
-               MTK_I2C_DMA_ASYNC_MODE);
-  MmioWrite32 (MTK_I2C_DMA_BASE + MTK_I2C_DMA_TX_ADDR,
-               (UINT32) (UINTN) mI2cTxBuf.Bytes);
-  MmioWrite32 (MTK_I2C_DMA_BASE + MTK_I2C_DMA_TX_LEN, (UINT32) Total);
-  MmioWrite32 (MTK_I2C_DMA_BASE + MTK_I2C_DMA_EN, MTK_I2C_DMA_START_EN);
+  //
+  // Only the low byte is the I2C register address.  The high byte of the
+  // vendor register number selects the MT6375 I2C bank/slave.
+  //
+  MmioWrite8 (MTK_I2C_BASE + MTK_I2C_DATA_PORT, (UINT8) Register);
+  for (Index = 0; Index < Length; Index++) {
+    MmioWrite8 (MTK_I2C_BASE + MTK_I2C_DATA_PORT, Buffer[Index]);
+  }
 
-  MtkI2cWrite16 (MTK_I2C_START,
-                 (UINT16) (BIT0 | MTK_I2C_RS_MUL_TRIG));
+  MtkI2cWrite16 (MTK_I2C_START, BIT0);
   Status = MtkI2cWaitComplete ();
 
   MtkI2cWrite16 (MTK_I2C_START, 0);
   MtkI2cWrite16 (MTK_I2C_INTR_MASK, 0);
-  MtkI2cWrite16 (MTK_I2C_INTR_STAT, MTK_I2C_INTR_ALL);
-  MmioWrite32 (MTK_I2C_DMA_BASE + MTK_I2C_DMA_EN, 0);
+  MtkI2cWrite16 (MTK_I2C_INTR_STAT, MTK_I2C_INTR_CLEAR);
   return Status;
 }
 
@@ -599,57 +629,42 @@ MtkI2cReadBytes (
   )
 {
   EFI_STATUS Status;
+  UINTN Index;
 
-  if (Length == 0 || Length > sizeof (mI2cRxBuf.Bytes)) {
+  if (Length == 0 || Length > 16) {
     return EFI_INVALID_PARAMETER;
   }
 
-  mI2cTxBuf.Bytes[0] = (UINT8) (Register >> 8);
-  mI2cTxBuf.Bytes[1] = (UINT8) Register;
-  ZeroMem (mI2cRxBuf.Bytes, Length);
-  WriteBackDataCacheRange (mI2cTxBuf.Bytes, 2);
-  InvalidateDataCacheRange (mI2cRxBuf.Bytes, Length);
-
+  //
+  // Combined write-then-read: the address byte is still the write address;
+  // DIR_CHANGE tells the controller to switch to receive after the register
+  // byte has been sent.  Only the low byte of the vendor register number is
+  // sent on the I2C bus.
+  //
   MtkI2cWrite16 (MTK_I2C_CONTROL,
                  (UINT16) (MTK_I2C_CONTROL_ACKERR | MTK_I2C_CONTROL_CLK_EXT |
-                           MTK_I2C_CONTROL_DMA_EN | MTK_I2C_CONTROL_DMAACK |
-                           MTK_I2C_CONTROL_ASYNC | MTK_I2C_CONTROL_DIR_CHG |
-                           MTK_I2C_CONTROL_RS));
+                           MTK_I2C_CONTROL_DIR_CHG | MTK_I2C_CONTROL_RS));
   MtkI2cWrite16 (MTK_I2C_SLAVE_ADDR1, (UINT16) (SlaveAddress << 1));
-  MtkI2cWrite16 (MTK_I2C_INTR_STAT, MTK_I2C_INTR_ALL);
+  MtkI2cWrite16 (MTK_I2C_INTR_STAT, MTK_I2C_INTR_CLEAR);
   MtkI2cWrite16 (MTK_I2C_FIFO_ADDR_CLR, MTK_I2C_FIFO_ADDR_CLR_EN);
-  MtkI2cWrite16 (MTK_I2C_INTR_MASK, MTK_I2C_INTR_ALL);
-  MtkI2cWrite16 (MTK_I2C_TRANSFER_LEN, 2);
+  MtkI2cWrite16 (MTK_I2C_INTR_MASK, MTK_I2C_INTR_ENABLE);
+  MtkI2cWrite16 (MTK_I2C_TRANSFER_LEN, 1);
   MtkI2cWrite16 (MTK_I2C_TRANSFER_LEN_AUX, (UINT16) Length);
   MtkI2cWrite16 (MTK_I2C_TRANSAC_LEN, 2);
 
-  MmioWrite32 (MTK_I2C_DMA_BASE + MTK_I2C_DMA_INT_FLAG, 0);
-  MmioWrite32 (MTK_I2C_DMA_BASE + MTK_I2C_DMA_CON,
-               MTK_I2C_DMA_SKIP_CONFIG | MTK_I2C_DMA_ASYNC_MODE |
-               MTK_I2C_DMA_DIR_CHANGE);
-  MmioWrite32 (MTK_I2C_DMA_BASE + MTK_I2C_DMA_TX_ADDR,
-               (UINT32) (UINTN) mI2cTxBuf.Bytes);
-  MmioWrite32 (MTK_I2C_DMA_BASE + MTK_I2C_DMA_TX_LEN, 2);
-  MmioWrite32 (MTK_I2C_DMA_BASE + MTK_I2C_DMA_RX_ADDR,
-               (UINT32) (UINTN) mI2cRxBuf.Bytes);
-  MmioWrite32 (MTK_I2C_DMA_BASE + MTK_I2C_DMA_RX_LEN, (UINT32) Length);
-  MmioWrite32 (MTK_I2C_DMA_BASE + MTK_I2C_DMA_EN, MTK_I2C_DMA_START_EN);
+  MmioWrite8 (MTK_I2C_BASE + MTK_I2C_DATA_PORT, (UINT8) Register);
 
-  MtkI2cWrite16 (MTK_I2C_START,
-                 (UINT16) (BIT0 | MTK_I2C_RS_MUL_TRIG | MTK_I2C_RS_MUL_CNFG));
+  MtkI2cWrite16 (MTK_I2C_START, BIT0);
   Status = MtkI2cWaitComplete ();
 
-  InvalidateDataCacheRange (mI2cRxBuf.Bytes, Length);
-  MtkI2cWrite16 (MTK_I2C_START, 0);
-  MtkI2cWrite16 (MTK_I2C_INTR_MASK, 0);
-  MtkI2cWrite16 (MTK_I2C_INTR_STAT, MTK_I2C_INTR_ALL);
-  MmioWrite32 (MTK_I2C_DMA_BASE + MTK_I2C_DMA_EN, 0);
-  if (EFI_ERROR (Status)) {
-    return Status;
+  for (Index = 0; Index < Length; Index++) {
+    Buffer[Index] = MmioRead8 (MTK_I2C_BASE + MTK_I2C_DATA_PORT);
   }
 
-  CopyMem (Buffer, mI2cRxBuf.Bytes, Length);
-  return EFI_SUCCESS;
+  MtkI2cWrite16 (MTK_I2C_START, 0);
+  MtkI2cWrite16 (MTK_I2C_INTR_MASK, 0);
+  MtkI2cWrite16 (MTK_I2C_INTR_STAT, MTK_I2C_INTR_CLEAR);
+  return Status;
 }
 
 STATIC EFI_STATUS
